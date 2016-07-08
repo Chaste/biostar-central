@@ -7,7 +7,7 @@ from django.core.urlresolvers import reverse
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Layout, Field, Fieldset, Div, Submit, ButtonHolder
 from django.shortcuts import render
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, HttpRequest
 from django.contrib import messages
 from . import auth
 from braces.views import LoginRequiredMixin
@@ -19,7 +19,26 @@ from biostar.const import OrderedDict
 from django.core.exceptions import ValidationError
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
+import re
 import logging
+
+import langdetect
+from django.template.loader import render_to_string
+
+def english_only(text):
+    try:
+        text.decode('ascii')
+    except Exception:
+        raise ValidationError('Title may only contain plain text (ASCII) characters')
+
+
+def valid_language(text):
+    supported_languages = settings.LANGUAGE_DETECTION
+    if supported_languages:
+        lang = langdetect.detect(text)
+        if lang not in supported_languages:
+            raise ValidationError(
+                    'Language "{0}" is not one of the supported languages {1}!'.format(lang, supported_languages))
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +68,16 @@ def valid_tag(text):
     if len(words) > 5:
         raise ValidationError('You have too many tags (5 allowed)')
 
+class PagedownWidget(forms.Textarea):
+    TEMPLATE = "pagedown_widget.html"
+
+    def render(self, name, value, attrs=None):
+        value = value or ''
+        rows = attrs.get('rows', 15)
+        klass = attrs.get('class', '')
+        params = dict(value=value, rows=rows, klass=klass)
+        return render_to_string(self.TEMPLATE, params)
+
 
 class LongForm(forms.Form):
     FIELDS = "title content post_type tag_val".split()
@@ -61,7 +90,7 @@ class LongForm(forms.Form):
 
     title = forms.CharField(
         label="Post Title",
-        max_length=200, min_length=10, validators=[valid_title],
+        max_length=200, min_length=10, validators=[valid_title, english_only],
         help_text="Descriptive titles promote better answers.")
 
     post_type = forms.ChoiceField(
@@ -74,7 +103,7 @@ class LongForm(forms.Form):
         help_text="Choose one or more tags to match the topic. To create a new tag just type it in and press ENTER.",
     )
 
-    content = forms.CharField(widget=forms.Textarea,
+    content = forms.CharField(widget=PagedownWidget, validators=[valid_language],
                               min_length=80, max_length=15000,
                               label="Enter your post below")
 
@@ -99,7 +128,7 @@ class LongForm(forms.Form):
 class ShortForm(forms.Form):
     FIELDS = ["content"]
 
-    content = forms.CharField(widget=forms.Textarea, min_length=20)
+    content = forms.CharField(widget=PagedownWidget, min_length=20, max_length=5000,)
 
     def __init__(self, *args, **kwargs):
         super(ShortForm, self).__init__(*args, **kwargs)
@@ -183,6 +212,7 @@ class NewPost(LoginRequiredMixin, FormView):
             value = request.GET.get(key)
             if value:
                 initial[key] = value
+
 
         # Attempt to prefill from external session
         sess = request.session

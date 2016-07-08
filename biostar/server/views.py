@@ -7,7 +7,7 @@ from django.core.cache import cache
 from biostar.apps.messages.models import Message
 from biostar.apps.users.models import User
 from biostar.apps.posts.models import Post, Vote, Tag, Subscription, ReplyToken
-from biostar.apps.posts.views import NewPost, NewAnswer
+from biostar.apps.posts.views import NewPost, NewAnswer, ShortForm
 from biostar.apps.badges.models import Badge, Award
 from biostar.apps.posts.auth import post_permissions
 from biostar.apps.util import html
@@ -72,7 +72,7 @@ def apply_sort(request, query):
     # Apply sort order
     sort = request.GET.get('sort', const.POST_SORT_DEFAULT)
     field = const.POST_SORT_MAP.get(sort, "-lastedit_date")
-    query = query.order_by(field)
+    query = query.order_by("-sticky", field)
 
     # Apply time limit.
     limit = request.GET.get('limit', const.POST_LIMIT_DEFAULT)
@@ -380,6 +380,10 @@ class PostDetails(DetailView):
 
         obj = super(PostDetails, self).get_object()
 
+        # Raise 404 if a deleted post is viewed by an anonymous user
+        if (obj.status == Post.DELETED) and not self.request.user.is_moderator:
+            raise Http404()
+
         # Update the post views.
         Post.update_post_views(obj, request=self.request)
 
@@ -440,8 +444,10 @@ class PostDetails(DetailView):
         return obj
 
     def get_context_data(self, **kwargs):
+
         context = super(PostDetails, self).get_context_data(**kwargs)
         context['request'] = self.request
+        context['form'] = ShortForm()
         return context
 
 
